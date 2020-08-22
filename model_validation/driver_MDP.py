@@ -92,7 +92,7 @@ class Driver_MDP:
         return a_continue
 
     def get_cycle(self):
-        cycle_length = 1000
+        cycle_length = 1500
 
         cycle = [0]
         v_t_con = 0

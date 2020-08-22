@@ -10,10 +10,15 @@ import pickle
 
 
 class Environment_ECMS:
-    def __init__(self, cell_model, cycle_path, battery_path, motor_path):
+    def __init__(self, cell_model, cycle_path, battery_path, motor_path, consider_degradation):
         self.cell_model = cell_model
+        self.consider_degradation = consider_degradation
+        if self.consider_degradation:
+            self.degradation_EF = 2.62
+        else:
+            self.degradation_EF = 0
 
-        self.version = 1
+        self.version = "latest"
 
         self.vehicle_comp = {
             "m_veh": 1200,
@@ -30,7 +35,7 @@ class Environment_ECMS:
             "cell_number": 400,
             "effective_area_cell": 200.0,
             "max_current_density": 1.0,
-            "idling_current_density": 0.00001,
+            "idling_current_density": 0.001,
             "Faraday_constant": 96485,
             "molar_mass_H2": 2.016,
         }
@@ -39,6 +44,12 @@ class Environment_ECMS:
             "j_resolution": 10,
             "action_size": 20,
             "state_size": 3,
+        }
+
+        self.degradation_comp = {
+            "idling_current_factor": 8.662,
+            "load_change_factor": 0.4185,
+            "high_power_factor": 10,
         }
 
         ####  Extract Cycle Information  #####
@@ -107,10 +118,12 @@ class Environment_ECMS:
         self.fuel_consumption = 0
         self.cycle_length = len(self.sp_out)
         self.idling_voltage = self.cell_model.get_voltage(self.stack_comp["idling_current_density"])
-
         self.action_grid = np.linspace(self.stack_comp["idling_current_density"],
                                        self.stack_comp["max_current_density"],
                                        20)
+
+        self.DC_eff = 0.96
+        self.power_aux = self.get_aux_power()
 
     def PMP_calculation(self, EF):
         self.SOC = 0.6
@@ -118,7 +131,8 @@ class Environment_ECMS:
             "SOC_traj": [],
             "fc_traj": [],
             "action_traj": [],
-            "H_traj": []
+            "H_traj": [],
+            "degradation": [],
         }
 
         for i in range(len(self.v_veh)):
@@ -150,7 +164,7 @@ class Environment_ECMS:
             cell_voltages = np.array([self.cell_model.get_voltage(j_fc) for j_fc in self.action_grid])
             stack_voltages = self.stack_comp["cell_number"] * cell_voltages
             stack_currents = self.stack_comp["effective_area_cell"] * self.action_grid
-            stack_powers = stack_voltages * stack_currents
+            stack_powers = stack_voltages * stack_currents * self.DC_eff - self.power_aux
             battery_powers = p_mot - stack_powers
 
             Hs, del_SOCs, del_fuels = self.get_vectors_with_pbat(battery_powers, stack_currents, EF)
@@ -212,6 +226,37 @@ class Environment_ECMS:
         i_lim_cha = interpolate.interp1d(self.battery['SOC_ind'], self.battery['Cur_lim_cha'], assume_sorted=False,
                                          fill_value='extrapolate')(self.SOC)
         return [v_dis, v_cha, r_dis, r_cha, i_lim_dis, i_lim_cha]
+
+    def get_aux_power(self):
+        # current density에 따라 바뀌도록 변경
+        # current density -> 압력변경
+        specific_heat = 1.4
+        heat_capacity = 1004
+        compressor_eff = 0.95
+        p_manifold = 3
+        p_atm = 1     # 바뀌어야함
+        T_atm = 298
+        air_flow = 0.04
+
+        power_comp = (heat_capacity * T_atm * air_flow / compressor_eff) * ((p_manifold / p_atm) ** (
+                (specific_heat-1) / specific_heat) - 1)
+        return power_comp
+
+    def calculate_degradation(self, action, action_prev):
+        idling_current = self.stack_comp["idling_current_density"]
+        current_high_criterion = 0.75
+        degradation_idling = 0
+        degradation_high_current = 0
+        degradation_loadChange = 0
+        if action == idling_current:
+            degradation_idling = self.degradation_comp["idling_current_factor"] / 3600  # [uv]
+        if action > current_high_criterion:
+            degradation_high_current = self.degradation_comp["high_power_factor"] / 3600  # [uv]
+        if action != action_prev:
+            degradation_loadChange = self.degradation_comp["load_change_factor"]
+
+        degradation = degradation_idling + degradation_high_current + degradation_loadChange
+        return degradation
 
 
 # driving_cycle_path = '../../OC_SIM_DB/OC_SIM_DB_Cycles/Highway/01_FTP72_fuds.mat'
