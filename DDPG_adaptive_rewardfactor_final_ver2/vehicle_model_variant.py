@@ -352,7 +352,7 @@ class Environment:
             degradation_idling = self.degradation_comp["idling_current_factor"] / 3600  # [uv]
         if action > current_high_criterion:
             degradation_high_current = self.degradation_comp["high_power_factor"] / 3600  # [uv]
-        if abs(action - action_prev) > 0.04:
+        if abs(action - action_prev) > 0.02:
             degradation_loadChange = self.degradation_comp["load_change_factor"]
 
         degradation = degradation_idling + degradation_high_current + degradation_loadChange
